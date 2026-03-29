@@ -43,11 +43,6 @@ impl DepositRecord {
     pub const SPACE: usize = 8 + 32 + 32 + 8 + 8 + 16 + 8 + 1;
 }
 
-impl VaultState {
-    pub const SPACE: usize =
-        8 + 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 16 + 2 + 8 + 8 + 24 + 1 + 4 + 1;
-}
-
 #[account]
 pub struct DepositReceipt {
     pub vault: Pubkey,     // 32
