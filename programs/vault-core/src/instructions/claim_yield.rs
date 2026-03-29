@@ -1,6 +1,6 @@
 use crate::{
     errors::VaultError,
-    events::WithdrawEvent,
+    events::YieldClaimed,
     state::{DepositRecord, VaultState},
 };
 use anchor_lang::prelude::*;
@@ -11,7 +11,7 @@ use anchor_spl::token_interface::{
 const YIELD_SCALE: u128 = 1_000_000_000_000u128;
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
+pub struct ClaimYield<'info> {
     #[account(
         mut,
         seeds = [b"vault", vault.authority.as_ref()],
@@ -32,13 +32,6 @@ pub struct Withdraw<'info> {
         token::mint = accepted_mint,
         token::authority = vault,
     )]
-    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        token::mint = accepted_mint,
-        token::authority = vault,
-    )]
     pub yield_reserve_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
@@ -52,100 +45,44 @@ pub struct Withdraw<'info> {
     pub depositor: Signer<'info>,
 
     pub accepted_mint: InterfaceAccount<'info, Mint>,
-    pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handle_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+pub fn handle_claim_yield(ctx: Context<ClaimYield>) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     let record = &mut ctx.accounts.deposit_record;
     let clock = Clock::get()?;
 
-    require!(amount > 0, VaultError::BelowMinimum);
-
-    let shares_to_withdraw = (amount as u128)
-        .checked_mul(record.shares as u128)
-        .ok_or(VaultError::MathOverflow)?
-        .checked_div(record.principal as u128)
-        .ok_or(VaultError::MathOverflow)? as u64;
-
-    require!(
-        shares_to_withdraw <= record.shares,
-        VaultError::InsufficientFunds
-    );
-
     accrue_yield_internal(vault, clock.unix_timestamp)?;
 
     let pending_yield = calculate_pending_yield(vault, record);
+    require!(pending_yield > 0, VaultError::NoYieldToClaim);
 
     let authority_key = vault.authority.key();
     let seeds = &[b"vault".as_ref(), authority_key.as_ref(), &[vault.bump]];
     let signer_seeds = &[&seeds[..]];
 
-    let vault_transfer = TransferChecked {
-        from: ctx.accounts.vault_token_account.to_account_info(),
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.yield_reserve_account.to_account_info(),
         mint: ctx.accounts.accepted_mint.to_account_info(),
         to: ctx.accounts.depositor_token_account.to_account_info(),
         authority: vault.to_account_info(),
     };
-    let vault_cpi_ctx = CpiContext::new_with_signer(
+    let cpi_ctx = CpiContext::new_with_signer(
         ctx.accounts.token_program.to_account_info(),
-        vault_transfer,
+        cpi_accounts,
         signer_seeds,
     );
-    transfer_checked(vault_cpi_ctx, amount, ctx.accounts.accepted_mint.decimals)?;
+    transfer_checked(cpi_ctx, pending_yield, ctx.accounts.accepted_mint.decimals)?;
 
-    if pending_yield > 0 {
-        let yield_transfer = TransferChecked {
-            from: ctx.accounts.yield_reserve_account.to_account_info(),
-            mint: ctx.accounts.accepted_mint.to_account_info(),
-            to: ctx.accounts.depositor_token_account.to_account_info(),
-            authority: vault.to_account_info(),
-        };
-        let yield_cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            yield_transfer,
-            signer_seeds,
-        );
-        transfer_checked(
-            yield_cpi_ctx,
-            pending_yield,
-            ctx.accounts.accepted_mint.decimals,
-        )?;
-    }
-
-    record.shares = record
-        .shares
-        .checked_sub(shares_to_withdraw)
-        .ok_or(VaultError::MathOverflow)?;
-    record.principal = record
-        .principal
-        .checked_sub(amount)
-        .ok_or(VaultError::MathOverflow)?;
-    let reward_debt = vault
-        .accumulated_yield_per_share
-        .checked_mul(shares_to_withdraw as u128)
-        .ok_or(VaultError::MathOverflow)?
-        .checked_div(YIELD_SCALE)
-        .ok_or(VaultError::MathOverflow)?;
     record.reward_debt = record
         .reward_debt
-        .checked_sub(reward_debt)
+        .checked_add(pending_yield as u128)
         .ok_or(VaultError::MathOverflow)?;
 
-    vault.total_shares = vault
-        .total_shares
-        .checked_sub(shares_to_withdraw)
-        .ok_or(VaultError::MathOverflow)?;
-    vault.total_deposits = vault
-        .total_deposits
-        .checked_sub(amount)
-        .ok_or(VaultError::MathOverflow)?;
-
-    emit!(WithdrawEvent {
+    emit!(YieldClaimed {
         wallet: ctx.accounts.depositor.key(),
-        principal_amount: amount,
-        yield_amount: pending_yield,
+        amount: pending_yield,
         vault_id: vault.key(),
         timestamp: clock.unix_timestamp,
     });
