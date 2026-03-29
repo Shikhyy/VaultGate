@@ -64,8 +64,17 @@ pub fn handle_initialize_vault(
     vault.yield_rate_bps = current_apy;
     vault.last_yield_accrual = clock.unix_timestamp;
     vault.total_yield_distributed = 0;
-    vault.allowed_jurisdictions = [[0u8; 2]; MAX_JURISDICTIONS];
-    vault.jurisdiction_count = 0;
+
+    let mut jurisdictions = [[0u8; 2]; MAX_JURISDICTIONS];
+    for (i, j) in allowed_jurisdictions
+        .iter()
+        .take(MAX_JURISDICTIONS)
+        .enumerate()
+    {
+        jurisdictions[i] = *j;
+    }
+    vault.allowed_jurisdictions = jurisdictions;
+    vault.jurisdiction_count = allowed_jurisdictions.len() as u8;
     vault.is_paused = false;
     vault.depositor_count = 0;
     vault.bump = ctx.bumps.vault;
