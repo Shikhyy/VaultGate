@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-const MAX_JURISDICTIONS: usize = 10;
+pub const MAX_JURISDICTIONS: usize = 10;
 
 #[account]
 pub struct VaultState {
@@ -40,20 +40,5 @@ pub struct DepositRecord {
 }
 
 impl DepositRecord {
-    pub const SPACE: usize = 8 + 32 + 32 + 8 + 8 + 16 + 8 + 1;
-}
-
-#[account]
-pub struct DepositReceipt {
-    pub vault: Pubkey,
-    pub depositor: Pubkey,
-    pub shares: u64,
-    pub principal: u64,
-    pub reward_debt: u128,
-    pub deposited_at: i64,
-    pub bump: u8,
-}
-
-impl DepositReceipt {
     pub const SPACE: usize = 8 + 32 + 32 + 8 + 8 + 16 + 8 + 1;
 }

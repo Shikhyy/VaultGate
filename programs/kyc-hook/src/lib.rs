@@ -1,9 +1,12 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::ID as TOKEN_PROGRAM_ID;
 use anchor_spl::token_interface::Mint;
 use spl_tlv_account_resolution::{
     account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
 };
-use spl_transfer_hook_interface::instruction::{ExecuteInstruction, TransferHookInstruction};
+use spl_transfer_hook_interface::instruction::{
+    ExecuteInstruction, InitializeExtraAccountMetaListInstruction, TransferHookInstruction,
+};
 
 pub mod errors;
 pub mod events;
@@ -12,7 +15,7 @@ use errors::*;
 use events::*;
 
 use access_registry::WalletRecord;
-use vault_core::state::VaultState;
+use vault_core::VaultState;
 
 declare_id!("BANmT4cxvACA68TAvJGdp6Fuk2g6xfFkfWzq2QmkfBVa");
 
@@ -25,24 +28,25 @@ pub mod kyc_hook {
         vault_bump: u8,
         vault_authority: Pubkey,
     ) -> Result<()> {
-        let mint = ctx.accounts.mint.key();
-
-        let vault_seeds: &[&[u8]] = &[b"vault", vault_authority.as_ref(), &[vault_bump]];
+        let vault_seeds: Vec<u8> = [
+            b"vault".to_vec(),
+            vault_authority.to_bytes().to_vec(),
+            vec![vault_bump],
+        ]
+        .concat();
 
         let wallet_record_seeds: &[&[u8]] = &[b"wallet-record"];
 
         let account_metas = vec![
             ExtraAccountMeta::new_with_seeds(
-                &[Seed::Literal {
-                    bytes: vault_seeds.to_vec(),
-                }],
+                &[Seed::Literal { bytes: vault_seeds }],
                 false,
                 false,
             )?,
             ExtraAccountMeta::new_with_seeds(
                 &[
                     Seed::Literal {
-                        bytes: wallet_record_seeds.to_vec(),
+                        bytes: wallet_record_seeds.concat(),
                     },
                     Seed::AccountKey { index: 3 },
                 ],
@@ -51,13 +55,14 @@ pub mod kyc_hook {
             )?,
         ];
 
-        let extra_account_meta_list =
-            ExtraAccountMetaList::init::<&ExtraAccountMeta>(&account_metas)?;
+        let extra_account_meta_list = ExtraAccountMetaList::init::<
+            InitializeExtraAccountMetaListInstruction,
+        >(&mut [], &account_metas)?;
 
-        ctx.accounts
-            .extra_account_meta_list
-            .data_dir()
-            .try_write_bytes(extra_account_meta_list.try_to_vec()?.as_slice())?;
+        let data = extra_account_meta_list.try_to_vec()?;
+
+        let meta_list = ctx.accounts.extra_account_meta_list.to_account_info();
+        meta_list.data.borrow_mut().copy_from_slice(&data);
 
         Ok(())
     }
@@ -71,83 +76,59 @@ pub mod kyc_hook {
 
         match instruction {
             TransferHookInstruction::Execute { amount } => {
-                let amount_bytes = amount.to_le_bytes();
-                __private::__global::transfer_hook(program_id, accounts, &amount_bytes)
+                execute_transfer_hook(program_id, accounts, amount)
             }
             _ => return Err(ProgramError::InvalidInstructionData.into()),
         }
     }
 }
 
-#[derive(Accounts)]
-pub struct TransferHook<'info> {
-    #[account(
-        address = spl_token::ID @ ProgramError::IncorrectProgramId
-    )]
-    /// CHECK: Source token account
-    pub source_token: AccountInfo<'info>,
+fn execute_transfer_hook<'info>(
+    _program_id: &Pubkey,
+    accounts: &'info [AccountInfo<'info>],
+    amount: u64,
+) -> Result<()> {
+    if accounts.len() < 7 {
+        return Err(ProgramError::NotEnoughAccountKeys.into());
+    }
 
-    pub mint: InterfaceAccount<'info, Mint>,
+    let source_authority = &accounts[3];
+    let vault_info = &accounts[5];
+    let wallet_record_info = &accounts[6];
 
-    #[account(
-        address = spl_token::ID @ ProgramError::IncorrectProgramId
-    )]
-    /// CHECK: Destination token account
-    pub destination_token: AccountInfo<'info>,
+    let vault_data = vault_info.try_borrow_data()?;
+    let vault_state = VaultState::try_deserialize(&mut vault_data.as_ref())?;
+    drop(vault_data);
 
-    /// CHECK: Source authority
-    pub source_authority: AccountInfo<'info>,
+    let wallet_record_data = wallet_record_info.try_borrow_data()?;
+    let wallet = WalletRecord::try_deserialize(&mut wallet_record_data.as_ref())?;
+    drop(wallet_record_data);
 
-    /// CHECK: ExtraAccountMetaList account
-    pub extra_account_meta_list: AccountInfo<'info>,
-
-    pub vault: Account<'info, VaultState>,
-
-    pub wallet_record: Account<'info, WalletRecord>,
-}
-
-#[access_control(transfer_hook_constraints(&ctx))]
-pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
-    let registry = &ctx.accounts.wallet_record;
-    let sender = ctx.accounts.source_authority.key();
-    let vault = &ctx.accounts.vault;
-
-    require!(registry.is_whitelisted(), HookError::NotKycVerified);
-
-    require!(!registry.is_sanctioned(), HookError::SanctionedAddress);
-
+    require!(wallet.is_whitelisted(), HookError::NotKycVerified);
+    require!(!wallet.is_sanctioned(), HookError::SanctionedAddress);
     require!(
-        registry.expires_at > Clock::get()?.unix_timestamp,
+        wallet.expires_at > Clock::get()?.unix_timestamp,
         HookError::KycExpired
     );
 
-    let allowed_jurisdictions: Vec<[u8; 2]> = vault
+    let allowed_jurisdictions: Vec<[u8; 2]> = vault_state
         .allowed_jurisdictions
         .iter()
-        .take(vault.jurisdiction_count as usize)
+        .take(vault_state.jurisdiction_count as usize)
         .cloned()
         .collect();
 
     require!(
-        registry.jurisdiction_allowed(&allowed_jurisdictions),
+        wallet.jurisdiction_allowed(&allowed_jurisdictions),
         HookError::JurisdictionNotAllowed
     );
 
     emit!(TransferChecked {
-        wallet: sender,
+        wallet: source_authority.key(),
         amount,
         timestamp: Clock::get()?.unix_timestamp,
     });
 
-    Ok(())
-}
-
-fn transfer_hook_constraints(ctx: &Context<TransferHook>) -> Result<()> {
-    require_keys_eq!(
-        ctx.accounts.wallet_record.wallet,
-        ctx.accounts.source_authority.key(),
-        HookError::NotKycVerified
-    );
     Ok(())
 }
 

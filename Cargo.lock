@@ -845,6 +845,7 @@ dependencies = [
  "spl-pod 0.4.0",
  "spl-tlv-account-resolution 0.7.0",
  "spl-transfer-hook-interface 0.7.0",
+ "vault-core",
 ]
 
 [[package]]

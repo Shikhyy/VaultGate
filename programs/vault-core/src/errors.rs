@@ -24,4 +24,6 @@ pub enum VaultError {
     InsufficientFunds,
     #[msg("Math overflow error")]
     MathOverflow,
+    #[msg("No yield to claim")]
+    NoYieldToClaim,
 }
