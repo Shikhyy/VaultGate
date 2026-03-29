@@ -1,0 +1,14 @@
+.anchor
+.DS_Store
+target/
+node_modules/
+dist/
+build/
+.env
+test-ledger/
+.yarn/
+# Never commit keypairs — use .env.example
+programs/*/keypair.json
+oracle/logs/
+*.key
+fireblocks_secret.key

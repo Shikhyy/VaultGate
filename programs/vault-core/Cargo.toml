@@ -1,0 +1,21 @@
+[package]
+name = "vault-core"
+version = "0.1.0"
+description = "VaultGate permissioned yield vault — deposit, withdraw, yield distribution"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "vault_core"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+access-registry = { path = "../access-registry", features = ["cpi"] }

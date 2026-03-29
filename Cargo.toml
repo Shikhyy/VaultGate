@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "programs/access-registry",
+    "programs/kyc-hook",
+    "programs/vault-core",
+]
+resolver = "2"
+
+[workspace.dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = "0.32.1"
+spl-transfer-hook-interface = "0.7.0"
+spl-tlv-account-resolution = "0.7.0"
+spl-pod = "0.4.0"
+
+[profile.release]
+overflow-checks = true
+lto = "thin"

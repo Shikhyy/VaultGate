@@ -1,0 +1,36 @@
+use anchor_lang::prelude::*;
+
+#[account]
+pub struct VaultState {
+    pub authority: Pubkey,                   // 32
+    pub accepted_mint: Pubkey,               // 32
+    pub total_deposits: u64,                 // 8
+    pub deposit_cap: u64,                    // 8
+    pub min_deposit: u64,                    // 8
+    pub current_apy: u16,                    // 2
+    pub accrued_yield: u64,                  // 8
+    pub last_yield_update: i64,              // 8
+    pub allowed_jurisdictions: Vec<[u8; 2]>, // 4 + (2 * N)  let's cap at 10 (24)
+    pub jurisdiction_count: u8,              // 1
+    pub is_paused: bool,                     // 1
+    pub depositor_count: u32,                // 4
+    pub bump: u8,                            // 1
+}
+
+impl VaultState {
+    pub const SPACE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 2 + 8 + 8 + 24 + 1 + 1 + 4 + 1; // 146
+}
+
+#[account]
+pub struct DepositReceipt {
+    pub vault: Pubkey,      // 32
+    pub depositor: Pubkey,  // 32
+    pub amount: u64,        // 8
+    pub deposited_at: i64,  // 8
+    pub yield_claimed: u64, // 8
+    pub bump: u8,           // 1
+}
+
+impl DepositReceipt {
+    pub const SPACE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 1; // 97
+}
